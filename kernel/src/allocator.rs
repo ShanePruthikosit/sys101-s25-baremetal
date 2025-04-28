@@ -12,12 +12,26 @@ pub static mut HEAP_START: usize = 0x0;
 pub static mut OFFSET: usize = 0x0;
 pub const HEAP_SIZE: usize = 100 * 1024; // 100 KiB
 
+fn align_up(addr: usize, align: usize) -> usize {
+    (addr + align - 1) & !(align - 1)
+}
+
 unsafe impl GlobalAlloc for DummyAllocator {
-    unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
-        unsafe {
-            // TODO: Implement me!
-            null_mut()
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size();
+        let align = layout.align();
+
+        let aligned_offset = align_up(HEAP_START + OFFSET, align);
+        let new_offset = aligned_offset + size;
+
+        if new_offset - HEAP_START > HEAP_SIZE {
+            writeln!(serial(), "alloc failed: not enough memory").ok();
+            return null_mut();
         }
+
+        let ptr = aligned_offset as *mut u8;
+        OFFSET = new_offset - HEAP_START;
+        ptr
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
@@ -27,6 +41,7 @@ unsafe impl GlobalAlloc for DummyAllocator {
 
 pub fn init_heap(offset: usize) {
     unsafe {
-        // TODO: Implement me!
+        HEAP_START = offset;
+        OFFSET = 0;
     }
 }
