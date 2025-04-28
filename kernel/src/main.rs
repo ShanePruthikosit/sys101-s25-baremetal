@@ -10,19 +10,25 @@ mod allocator;
 mod frame_allocator;
 mod interrupts;
 mod gdt;
+mod pong;
 
 use alloc::boxed::Box;
 use core::fmt::Write;
 use core::slice;
+use core::sync::atomic::{AtomicBool, Ordering};
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping::Dynamic;
 use bootloader_api::info::MemoryRegionKind;
 use kernel::{HandlerTable, serial};
-use pc_keyboard::DecodedKey;
+use pc_keyboard::{DecodedKey, KeyCode};
 use x86_64::registers::control::Cr3;
 use x86_64::VirtAddr;
 use crate::frame_allocator::BootInfoFrameAllocator;
 use crate::screen::{Writer, screenwriter};
+
+// Track key states locally
+static KEY_W_ACTIVE: AtomicBool = AtomicBool::new(false);
+static KEY_S_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 const BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
@@ -77,6 +83,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     
     gdt::init();
 
+    // Initialize pong game before starting the kernel
+    pong::init_game();
+    
     // print out values from heap allocation
     let x = Box::new(42);
     let y = Box::new(24);
@@ -95,16 +104,54 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 }
 
 fn start() {
-    writeln!(Writer, "Hello, world!").unwrap();
+    writeln!(Writer, "Welcome to Pong OS!").unwrap();
 }
 
 fn tick() {
-    write!(Writer, ".").unwrap();
+    // Update the game state on each timer tick
+    pong::update_game();
 }
 
 fn key(key: DecodedKey) {
+    // Debug output to see what keys are being detected
+    writeln!(serial(), "Key detected: {:?}", key).unwrap();
+    
     match key {
-        DecodedKey::Unicode(character) => write!(Writer, "{}", character).unwrap(),
-        DecodedKey::RawKey(key) => write!(Writer, "{:?}", key).unwrap(),
+        DecodedKey::Unicode(character) => {
+            match character {
+                'w' => {
+                    // Direct key state setting - no toggling
+                    pong::set_key_w(true);
+                    writeln!(serial(), "W key pressed").unwrap();
+                },
+                's' => {
+                    pong::set_key_s(true);
+                    writeln!(serial(), "S key pressed").unwrap();
+                },
+                ' ' => {
+                    pong::start_game();
+                    // Reset only left paddle key states
+                    pong::set_key_w(false);
+                    pong::set_key_s(false);
+                    writeln!(serial(), "Space pressed - game started").unwrap();
+                },
+                'q' => {
+                    // Release left paddle keys
+                    pong::set_key_w(false);
+                    pong::set_key_s(false);
+                    writeln!(serial(), "Keys released with Q").unwrap();
+                },
+                _ => write!(Writer, "{}", character).unwrap(),
+            }
+        },
+        DecodedKey::RawKey(key) => {
+            writeln!(serial(), "Raw key: {:?}", key).unwrap();
+            // Only handle W and S raw key codes
+            match key {
+                KeyCode::W => pong::set_key_w(true),
+                KeyCode::S => pong::set_key_s(true),
+                _ => write!(Writer, "{:?}", key).unwrap(),
+            }
+        },
     }
 }
